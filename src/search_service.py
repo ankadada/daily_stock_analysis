@@ -267,7 +267,7 @@ class TavilySearchProvider(BaseSearchProvider):
             # 执行搜索（优化：使用advanced深度、限制最近几天）
             response = client.search(
                 query=query,
-                search_depth="advanced",  # advanced 获取更多结果
+                search_depth="basic",  # basic 节省额度（1 credit/次 vs advanced 5 credits/次）
                 max_results=max_results,
                 include_answer=False,
                 include_raw_content=False,
