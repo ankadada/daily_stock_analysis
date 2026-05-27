@@ -203,11 +203,16 @@ class YfinanceFetcher(BaseFetcher):
             df.columns = df.columns.get_level_values(0)
         
         # 重置索引，将日期从索引变为列
+        # yfinance 1.4.0+ 的 DatetimeIndex 可能没有 name 属性，
+        # 导致 reset_index() 后日期列名为 'index' 而非 'Date'
+        if df.index.name is None:
+            df.index.name = 'Date'
         df = df.reset_index()
         
-        # 列名映射（yfinance 使用首字母大写）
+        # 列名映射（yfinance 使用首字母大写，或 reset_index 后为 'index'）
         column_mapping = {
             'Date': 'date',
+            'index': 'date',
             'Open': 'open',
             'High': 'high',
             'Low': 'low',
