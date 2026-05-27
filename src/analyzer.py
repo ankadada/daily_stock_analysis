@@ -446,6 +446,11 @@ class GeminiAnalyzer:
     # 检查清单模板 - 不含筹码检查（美股等）
     _CHECKLIST_WITHOUT_CHIP = '''["✅/⚠️/❌ 多头排列", "✅/⚠️/❌ 乖离率合理", "✅/⚠️/❌ 量能配合", "✅/⚠️/❌ 无重大利空", "✅/⚠️/❌ PE估值合理"]'''
 
+    @staticmethod
+    def _is_us_stock(code: str) -> bool:
+        """判断是否为美股代码（纯字母）"""
+        return code.isalpha()
+
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LLM Analyzer via LiteLLM.
 
@@ -881,12 +886,16 @@ class GeminiAnalyzer:
         # 根据数据可用性添加说明
         if has_chip:
             prompt += self._JSON_TEMPLATE_CHIP
-            checklist = self._CHECKLIST_WITH_CHIP
         else:
             prompt += """
 
 注意：该股票无筹码数据，chip_structure字段可省略。"""
+        
+        # 根据股票代码类型选择检查清单
+        if self._is_us_stock(code):
             checklist = self._CHECKLIST_WITHOUT_CHIP
+        else:
+            checklist = self._CHECKLIST_WITH_CHIP
 
         prompt += f"""
 
@@ -899,11 +908,13 @@ class GeminiAnalyzer:
 2. ❓ 当前乖离率是否在安全范围内（<5%）？—— 超过5%必须标注"严禁追高"
 3. ❓ 量能是否配合（缩量回调/放量突破）？
 """
-        if has_chip:
+        if self._is_us_stock(code):
+            # 美股：4个问题（不包含筹码结构）
+            prompt += "4. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）\n"
+        else:
+            # A股：5个问题（包含筹码结构）
             prompt += "4. ❓ 筹码结构是否健康？\n"
             prompt += "5. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）\n"
-        else:
-            prompt += "4. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）\n"
 
         prompt += f"""
 ### 决策仪表盘要求：

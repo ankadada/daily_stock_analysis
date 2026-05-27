@@ -220,11 +220,15 @@ class BaseSearchProvider(ABC):
         """
         if not self._quota_exhausted:
             self._quota_exhausted = True
-            logger.warning(
-                f"[{self._name}] 搜索API额度已用完，跳过新闻搜索。"
-                f"分析将继续进行，但不会有舆情信息。"
-                f"错误详情: {error_message}"
+            hint = (
+                f"[{self._name}] 搜索额度已用完，新闻搜索将暂停。\n"
+                f"  分析将继续进行，但不会有舆情信息。\n"
+                f"  解决方案：\n"
+                f"    1) 等待下个月额度重置\n"
+                f"    2) 配置其他搜索API（Brave/Bocha）作为替代\n"
+                f"  原始错误: {error_message}"
             )
+            logger.warning(hint)
     
     @abstractmethod
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
@@ -1067,6 +1071,13 @@ class SearchService:
             return True
         return False
 
+    @staticmethod
+    def _is_us_stock(stock_code: str) -> bool:
+        """判断是否为美股（纯字母代码，如 AAPL, TSLA, NVDA, BRK.B）"""
+        import re
+        code = stock_code.strip()
+        return bool(re.match(r'^[A-Za-z]{1,5}(\.[A-Za-z])?$', code))
+
     # A-share ETF code prefixes (Shanghai 51/52/56/58, Shenzhen 15/16/18)
     _A_ETF_PREFIXES = ('51', '52', '56', '58', '15', '16', '18')
     _ETF_NAME_KEYWORDS = ('ETF', 'FUND', 'TRUST', 'INDEX', 'TRACKER', 'UNIT')  # US/HK ETF name hints
@@ -1096,6 +1107,13 @@ class SearchService:
     def is_available(self) -> bool:
         """检查是否有可用的搜索引擎"""
         return any(p.is_available for p in self._providers)
+
+    @property
+    def quota_exhausted(self) -> bool:
+        """检查是否所有搜索引擎都因额度耗尽而不可用"""
+        if not self._providers:
+            return False
+        return all(not p.is_available for p in self._providers)
 
     def _cache_key(self, query: str, max_results: int, days: int) -> str:
         """Build a cache key from query parameters."""
@@ -1166,15 +1184,15 @@ class SearchService:
         search_days = min(weekday_days, self.news_max_age_days)
 
         # 构建搜索查询（优化搜索效果）
-        is_foreign = self._is_foreign_stock(stock_code)
+        is_us = self._is_us_stock(stock_code)
         if focus_keywords:
             # 如果提供了关键词，直接使用关键词作为查询
             query = " ".join(focus_keywords)
-        elif is_foreign:
-            # 港股/美股使用英文搜索关键词
+        elif is_us:
+            # 美股使用英文搜索关键词（提高英文新闻命中率）
             query = f"{stock_name} {stock_code} stock latest news"
         else:
-            # 默认主查询：股票名称 + 核心关键词
+            # A股/港股使用中文搜索关键词
             query = f"{stock_name} {stock_code} 股票 最新消息"
 
         logger.info(f"搜索股票新闻: {stock_name}({stock_code}), query='{query}', 时间范围: 近{search_days}天")
@@ -1201,12 +1219,15 @@ class SearchService:
                 logger.warning(f"{provider.name} 搜索失败: {response.error_message}，尝试下一个引擎")
         
         # 所有引擎都失败
+        quota_msg = ""
+        if self.quota_exhausted:
+            quota_msg = "（所有搜索引擎额度已用完，请等待下月重置或配置其他搜索API）"
         return SearchResponse(
             query=query,
             results=[],
             provider="None",
             success=False,
-            error_message="所有搜索引擎都不可用或搜索失败"
+            error_message=f"所有搜索引擎都不可用或搜索失败{quota_msg}"
         )
     
     def search_stock_events(
@@ -1229,7 +1250,7 @@ class SearchService:
             SearchResponse 对象
         """
         if event_types is None:
-            if self._is_foreign_stock(stock_code):
+            if self._is_us_stock(stock_code):
                 event_types = ["earnings report", "insider selling", "quarterly results"]
             else:
                 event_types = ["年报预告", "减持公告", "业绩快报"]
@@ -1283,10 +1304,10 @@ class SearchService:
         results = {}
         search_count = 0
 
-        is_foreign = self._is_foreign_stock(stock_code)
+        is_us = self._is_us_stock(stock_code)
         is_index_etf = self.is_index_or_etf(stock_code, stock_name)
 
-        if is_foreign:
+        if is_us:
             if is_index_etf:
                 search_dimensions = [
                     {'name': 'latest_news', 'query': f"{stock_name} {stock_code} latest news analyst rating target price", 'desc': '最新消息与机构分析'},
@@ -1354,6 +1375,13 @@ class SearchService:
             格式化的情报报告文本
         """
         lines = [f"【{stock_name} 情报搜索结果】"]
+        
+        # 检查是否因额度问题导致搜索失败
+        all_failed_or_empty = all(
+            not resp.success or not resp.results for resp in intel_results.values()
+        )
+        if all_failed_or_empty and self.quota_exhausted:
+            lines.insert(1, "注：新闻搜索因额度限制被跳过，以下分析仅基于技术面数据")
         
         # 维度展示顺序（兼容合并前后的维度名称）
         display_order = ['latest_news', 'market_analysis', 'risk_check', 'earnings', 'industry',
@@ -1464,8 +1492,8 @@ class SearchService:
         successful_providers = []
         
         # 使用多个关键词模板搜索
-        is_foreign = self._is_foreign_stock(stock_code)
-        keywords = self.ENHANCED_SEARCH_KEYWORDS_EN if is_foreign else self.ENHANCED_SEARCH_KEYWORDS
+        is_us = self._is_us_stock(stock_code)
+        keywords = self.ENHANCED_SEARCH_KEYWORDS_EN if is_us else self.ENHANCED_SEARCH_KEYWORDS
         for i, keyword_template in enumerate(keywords[:max_attempts]):
             query = keyword_template.format(name=stock_name, code=stock_code)
             
