@@ -123,6 +123,22 @@ class SearchResponse:
 class BaseSearchProvider(ABC):
     """搜索引擎基类"""
     
+    # 额度错误关键词（用于检测API额度耗尽）
+    QUOTA_ERROR_KEYWORDS = [
+        "exceeds your plan's set usage limit",
+        "usage limit",
+        "quota exceeded",
+        "rate limit",
+        "quota",
+        "billing",
+        "payment required",
+        "insufficient funds",
+        "balance insufficient",
+        "余额不足",
+        "额度",
+        "配额",
+    ]
+    
     def __init__(self, api_keys: List[str], name: str):
         """
         初始化搜索引擎
@@ -136,6 +152,7 @@ class BaseSearchProvider(ABC):
         self._key_cycle = cycle(api_keys) if api_keys else None
         self._key_usage: Dict[str, int] = {key: 0 for key in api_keys}
         self._key_errors: Dict[str, int] = {key: 0 for key in api_keys}
+        self._quota_exhausted = False  # 标记额度是否已耗尽
     
     @property
     def name(self) -> str:
@@ -143,7 +160,9 @@ class BaseSearchProvider(ABC):
     
     @property
     def is_available(self) -> bool:
-        """检查是否有可用的 API Key"""
+        """检查是否有可用的 API Key 且额度未耗尽"""
+        if self._quota_exhausted:
+            return False
         return bool(self._api_keys)
     
     def _get_next_key(self) -> Optional[str]:
@@ -179,6 +198,34 @@ class BaseSearchProvider(ABC):
         self._key_errors[key] = self._key_errors.get(key, 0) + 1
         logger.warning(f"[{self._name}] API Key {key[:8]}... 错误计数: {self._key_errors[key]}")
     
+    def _is_quota_error(self, error_message: str) -> bool:
+        """
+        检测是否是额度相关错误
+        
+        Args:
+            error_message: 错误信息
+            
+        Returns:
+            True 表示是额度错误
+        """
+        error_lower = error_message.lower()
+        return any(keyword in error_lower for keyword in self.QUOTA_ERROR_KEYWORDS)
+    
+    def _handle_quota_error(self, error_message: str) -> None:
+        """
+        处理额度错误：标记provider为不可用并记录警告
+        
+        Args:
+            error_message: 原始错误信息
+        """
+        if not self._quota_exhausted:
+            self._quota_exhausted = True
+            logger.warning(
+                f"[{self._name}] 搜索API额度已用完，跳过新闻搜索。"
+                f"分析将继续进行，但不会有舆情信息。"
+                f"错误详情: {error_message}"
+            )
+    
     @abstractmethod
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
         """执行搜索（子类实现）"""
@@ -196,6 +243,16 @@ class BaseSearchProvider(ABC):
         Returns:
             SearchResponse 对象
         """
+        # 如果额度已耗尽，直接返回降级响应
+        if self._quota_exhausted:
+            return SearchResponse(
+                query=query,
+                results=[],
+                provider=self._name,
+                success=False,
+                error_message=f"{self._name} 额度已用完，跳过搜索"
+            )
+        
         api_key = self._get_next_key()
         if not api_key:
             return SearchResponse(
@@ -215,20 +272,31 @@ class BaseSearchProvider(ABC):
                 self._record_success(api_key)
                 logger.info(f"[{self._name}] 搜索 '{query}' 成功，返回 {len(response.results)} 条结果，耗时 {response.search_time:.2f}s")
             else:
-                self._record_error(api_key)
+                # 检查是否是额度错误
+                if response.error_message and self._is_quota_error(response.error_message):
+                    self._handle_quota_error(response.error_message)
+                else:
+                    self._record_error(api_key)
             
             return response
             
         except Exception as e:
-            self._record_error(api_key)
             elapsed = time.time() - start_time
-            logger.error(f"[{self._name}] 搜索 '{query}' 失败: {e}")
+            error_msg = str(e)
+            
+            # 检查是否是额度错误
+            if self._is_quota_error(error_msg):
+                self._handle_quota_error(error_msg)
+            else:
+                self._record_error(api_key)
+                logger.error(f"[{self._name}] 搜索 '{query}' 失败: {e}")
+            
             return SearchResponse(
                 query=query,
                 results=[],
                 provider=self._name,
                 success=False,
-                error_message=str(e),
+                error_message=error_msg,
                 search_time=elapsed
             )
 
@@ -245,8 +313,9 @@ class TavilySearchProvider(BaseSearchProvider):
     文档：https://docs.tavily.com/
     """
     
-    def __init__(self, api_keys: List[str]):
+    def __init__(self, api_keys: List[str], search_depth: str = "basic"):
         super().__init__(api_keys, "Tavily")
+        self._search_depth = search_depth
     
     def _do_search(self, query: str, api_key: str, max_results: int, days: int = 7) -> SearchResponse:
         """执行 Tavily 搜索"""
@@ -264,14 +333,14 @@ class TavilySearchProvider(BaseSearchProvider):
         try:
             client = TavilyClient(api_key=api_key)
             
-            # 执行搜索（优化：使用advanced深度、限制最近几天）
+            # 执行搜索
             response = client.search(
                 query=query,
-                search_depth="basic",  # basic 节省额度（1 credit/次 vs advanced 5 credits/次）
+                search_depth=self._search_depth,
                 max_results=max_results,
                 include_answer=False,
                 include_raw_content=False,
-                days=days,  # 搜索最近天数的内容
+                days=days,
             )
             
             # 记录原始响应到日志
@@ -298,7 +367,7 @@ class TavilySearchProvider(BaseSearchProvider):
             
         except Exception as e:
             error_msg = str(e)
-            # 检查是否是配额问题
+            # 检查是否是配额问题（传递原始错误信息供基类检测）
             if 'rate limit' in error_msg.lower() or 'quota' in error_msg.lower():
                 error_msg = f"API 配额已用尽: {error_msg}"
             
@@ -936,6 +1005,7 @@ class SearchService:
         brave_keys: Optional[List[str]] = None,
         serpapi_keys: Optional[List[str]] = None,
         news_max_age_days: int = 3,
+        search_depth: str = "basic",
     ):
         """
         初始化搜索服务
@@ -946,9 +1016,11 @@ class SearchService:
             brave_keys: Brave Search API Key 列表
             serpapi_keys: SerpAPI Key 列表
             news_max_age_days: 新闻最大时效（天）
+            search_depth: 搜索深度 (basic/advanced)
         """
         self._providers: List[BaseSearchProvider] = []
         self.news_max_age_days = max(1, news_max_age_days)
+        self.search_depth = search_depth if search_depth in ("basic", "advanced") else "basic"
 
         # 初始化搜索引擎（按优先级排序）
         # 1. Bocha 优先（中文搜索优化，AI摘要）
@@ -958,8 +1030,8 @@ class SearchService:
 
         # 2. Tavily（免费额度更多，每月 1000 次）
         if tavily_keys:
-            self._providers.append(TavilySearchProvider(tavily_keys))
-            logger.info(f"已配置 Tavily 搜索，共 {len(tavily_keys)} 个 API Key")
+            self._providers.append(TavilySearchProvider(tavily_keys, search_depth=self.search_depth))
+            logger.info(f"已配置 Tavily 搜索，共 {len(tavily_keys)} 个 API Key，搜索深度: {self.search_depth}")
 
         # 3. Brave Search（隐私优先，全球覆盖）
         if brave_keys:
@@ -1215,39 +1287,27 @@ class SearchService:
         is_index_etf = self.is_index_or_etf(stock_code, stock_name)
 
         if is_foreign:
-            search_dimensions = [
-                {'name': 'latest_news', 'query': f"{stock_name} {stock_code} latest news events", 'desc': '最新消息'},
-                {'name': 'market_analysis', 'query': f"{stock_name} analyst rating target price report", 'desc': '机构分析'},
-                {'name': 'risk_check', 'query': (
-                    f"{stock_name} {stock_code} index performance outlook tracking error"
-                    if is_index_etf else f"{stock_name} risk insider selling lawsuit litigation"
-                ), 'desc': '风险排查'},
-                {'name': 'earnings', 'query': (
-                    f"{stock_name} {stock_code} index performance composition outlook"
-                    if is_index_etf else f"{stock_name} earnings revenue profit growth forecast"
-                ), 'desc': '业绩预期'},
-                {'name': 'industry', 'query': (
-                    f"{stock_name} {stock_code} index sector allocation holdings"
-                    if is_index_etf else f"{stock_name} industry competitors market share outlook"
-                ), 'desc': '行业分析'},
-            ]
+            if is_index_etf:
+                search_dimensions = [
+                    {'name': 'latest_news', 'query': f"{stock_name} {stock_code} latest news analyst rating target price", 'desc': '最新消息与机构分析'},
+                    {'name': 'risk_earnings', 'query': f"{stock_name} {stock_code} index performance outlook composition holdings tracking error", 'desc': '风险与业绩'},
+                ]
+            else:
+                search_dimensions = [
+                    {'name': 'latest_news', 'query': f"{stock_name} {stock_code} latest news analyst rating target price risk insider selling", 'desc': '最新消息与风险'},
+                    {'name': 'earnings_industry', 'query': f"{stock_name} earnings revenue profit growth forecast industry competitors market share", 'desc': '业绩与行业'},
+                ]
         else:
-            search_dimensions = [
-                {'name': 'latest_news', 'query': f"{stock_name} {stock_code} 最新 新闻 重大 事件", 'desc': '最新消息'},
-                {'name': 'market_analysis', 'query': f"{stock_name} 研报 目标价 评级 深度分析", 'desc': '机构分析'},
-                {'name': 'risk_check', 'query': (
-                    f"{stock_name} 指数走势 跟踪误差 净值 表现"
-                    if is_index_etf else f"{stock_name} 减持 处罚 违规 诉讼 利空 风险"
-                ), 'desc': '风险排查'},
-                {'name': 'earnings', 'query': (
-                    f"{stock_name} 指数成分 净值 跟踪表现"
-                    if is_index_etf else f"{stock_name} 业绩预告 财报 营收 净利润 同比增长"
-                ), 'desc': '业绩预期'},
-                {'name': 'industry', 'query': (
-                    f"{stock_name} 指数成分股 行业配置 权重"
-                    if is_index_etf else f"{stock_name} 所在行业 竞争对手 市场份额 行业前景"
-                ), 'desc': '行业分析'},
-            ]
+            if is_index_etf:
+                search_dimensions = [
+                    {'name': 'latest_news', 'query': f"{stock_name} {stock_code} 最新消息 研报 目标价 评级 走势", 'desc': '最新消息与机构分析'},
+                    {'name': 'risk_earnings', 'query': f"{stock_name} 指数成分 净值 跟踪误差 行业配置 权重 表现", 'desc': '风险与业绩'},
+                ]
+            else:
+                search_dimensions = [
+                    {'name': 'latest_news', 'query': f"{stock_name} {stock_code} 最新消息 研报 目标价 评级 减持 风险 利空", 'desc': '最新消息与风险'},
+                    {'name': 'earnings_industry', 'query': f"{stock_name} 业绩预告 财报 营收 净利润 行业 竞争对手 前景", 'desc': '业绩与行业'},
+                ]
         
         logger.info(f"开始多维度情报搜索: {stock_name}({stock_code})")
         
@@ -1295,8 +1355,9 @@ class SearchService:
         """
         lines = [f"【{stock_name} 情报搜索结果】"]
         
-        # 维度展示顺序
-        display_order = ['latest_news', 'market_analysis', 'risk_check', 'earnings', 'industry']
+        # 维度展示顺序（兼容合并前后的维度名称）
+        display_order = ['latest_news', 'market_analysis', 'risk_check', 'earnings', 'industry',
+                         'risk_earnings', 'earnings_industry']
         
         for dim_name in display_order:
             if dim_name not in intel_results:
@@ -1311,6 +1372,8 @@ class SearchService:
             elif dim_name == 'risk_check': dim_desc = '⚠️ 风险排查'
             elif dim_name == 'earnings': dim_desc = '📊 业绩预期'
             elif dim_name == 'industry': dim_desc = '🏭 行业分析'
+            elif dim_name == 'risk_earnings': dim_desc = '⚠️📊 风险与业绩'
+            elif dim_name == 'earnings_industry': dim_desc = '📊🏭 业绩与行业'
             
             lines.append(f"\n{dim_desc} (来源: {resp.provider}):")
             if resp.success and resp.results:

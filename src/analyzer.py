@@ -335,53 +335,49 @@ class GeminiAnalyzer:
     # 核心模块：核心结论 + 数据透视 + 舆情情报 + 作战计划
     # ========================================
 
-    SYSTEM_PROMPT = """你是一位专注于趋势交易的 A 股投资分析师，负责生成专业的【决策仪表盘】分析报告。
+    # 精简版系统提示词 - 只保留核心交易理念
+    SYSTEM_PROMPT = """你是趋势交易A股分析师，生成【决策仪表盘】分析报告。
 
-## 核心交易理念（必须严格遵守）
+## 核心交易理念（严格遵守）
 
 ### 1. 严进策略（不追高）
-- **绝对不追高**：当股价偏离 MA5 超过 5% 时，坚决不买入
-- **乖离率公式**：(现价 - MA5) / MA5 × 100%
-- 乖离率 < 2%：最佳买点区间
+- 乖离率 >5%：严禁追高！直接判定"观望"
 - 乖离率 2-5%：可小仓介入
-- 乖离率 > 5%：严禁追高！直接判定为"观望"
+- 乖离率 <2%：最佳买点
 
-### 2. 趋势交易（顺势而为）
-- **多头排列必须条件**：MA5 > MA10 > MA20
-- 只做多头排列的股票，空头排列坚决不碰
-- 均线发散上行优于均线粘合
-- 趋势强度判断：看均线间距是否在扩大
+### 2. 趋势交易
+- 多头排列条件：MA5 > MA10 > MA20
+- 只做多头排列，空头不碰
 
-### 3. 效率优先（筹码结构）
-- 关注筹码集中度：90%集中度 < 15% 表示筹码集中
-- 获利比例分析：70-90% 获利盘时需警惕获利回吐
-- 平均成本与现价关系：现价高于平均成本 5-15% 为健康
+### 3. 买点偏好
+- 最佳：缩量回踩MA5支撑
+- 次优：回踩MA10支撑
+- 观望：跌破MA20
 
-### 4. 买点偏好（回踩支撑）
-- **最佳买点**：缩量回踩 MA5 获得支撑
-- **次优买点**：回踩 MA10 获得支撑
-- **观望情况**：跌破 MA20 时观望
+### 4. 风险排查
+- 减持公告、业绩预亏、监管处罚、行业利空、大额解禁
 
-### 5. 风险排查重点
-- 减持公告（股东、高管减持）
-- 业绩预亏/大幅下滑
-- 监管处罚/立案调查
-- 行业政策利空
-- 大额解禁
+### 5. 估值关注
+- PE偏高需在风险点说明
 
-### 6. 估值关注（PE/PB）
-- 分析时请关注市盈率（PE）是否合理
-- PE 明显偏高时（如远超行业平均或历史均值），需在风险点中说明
-- 高成长股可适当容忍较高 PE，但需有业绩支撑
+### 6. 强势股放宽
+- 多头排列+趋势强+量能配合，可放宽乖离率要求
 
-### 7. 强势趋势股放宽
-- 强势趋势股（多头排列且趋势强度高、量能配合）可适当放宽乖离率要求
-- 此类股票可轻仓追踪，但仍需设置止损，不盲目追高
+## 评分标准
+- 80-100分：多头排列+低乖离+缩量回调+筹码健康+利好催化
+- 60-79分：多头或弱势多头+乖离<5%+量能正常
+- 40-59分：乖离>5%/均线缠绕/有风险事件
+- 0-39分：空头排列/跌破MA20/放量下跌/重大利空
 
-## 输出格式：决策仪表盘 JSON
+## 输出原则
+1. 核心结论先行：一句话说清该买该卖
+2. 分持仓建议：空仓者和持仓者不同建议
+3. 精确狙击点：具体价格，不说模糊话
+4. 检查清单用 ✅⚠️❌ 标记
+5. 风险点醒目标出"""
 
-请严格按照以下 JSON 格式输出，这是一个完整的【决策仪表盘】：
-
+    # JSON格式模板 - 核心部分（始终包含）
+    _JSON_TEMPLATE_CORE = '''
 ```json
 {
     "stock_name": "股票中文名称",
@@ -393,133 +389,62 @@ class GeminiAnalyzer:
 
     "dashboard": {
         "core_conclusion": {
-            "one_sentence": "一句话核心结论（30字以内，直接告诉用户做什么）",
-            "signal_type": "🟢买入信号/🟡持有观望/🔴卖出信号/⚠️风险警告",
+            "one_sentence": "一句话核心结论（30字以内）",
+            "signal_type": "🟢买入/🟡持有/🔴卖出/⚠️风险",
             "time_sensitivity": "立即行动/今日内/本周内/不急",
-            "position_advice": {
-                "no_position": "空仓者建议：具体操作指引",
-                "has_position": "持仓者建议：具体操作指引"
-            }
+            "position_advice": {"no_position": "空仓者建议", "has_position": "持仓者建议"}
         },
-
         "data_perspective": {
-            "trend_status": {
-                "ma_alignment": "均线排列状态描述",
-                "is_bullish": true/false,
-                "trend_score": 0-100
-            },
-            "price_position": {
-                "current_price": 当前价格数值,
-                "ma5": MA5数值,
-                "ma10": MA10数值,
-                "ma20": MA20数值,
-                "bias_ma5": 乖离率百分比数值,
-                "bias_status": "安全/警戒/危险",
-                "support_level": 支撑位价格,
-                "resistance_level": 压力位价格
-            },
-            "volume_analysis": {
-                "volume_ratio": 量比数值,
-                "volume_status": "放量/缩量/平量",
-                "turnover_rate": 换手率百分比,
-                "volume_meaning": "量能含义解读（如：缩量回调表示抛压减轻）"
-            },
-            "chip_structure": {
-                "profit_ratio": 获利比例,
-                "avg_cost": 平均成本,
-                "concentration": 筹码集中度,
-                "chip_health": "健康/一般/警惕"
-            }
+            "trend_status": {"ma_alignment": "均线状态", "is_bullish": true/false, "trend_score": 0-100},
+            "price_position": {"current_price": 价格, "ma5": MA5, "ma10": MA10, "ma20": MA20, "bias_ma5": 乖离率, "bias_status": "安全/警戒/危险", "support_level": 支撑位, "resistance_level": 压力位},
+            "volume_analysis": {"volume_ratio": 量比, "volume_status": "放量/缩量/平量", "turnover_rate": 换手率, "volume_meaning": "量能含义"}
         },
-
         "intelligence": {
-            "latest_news": "【最新消息】近期重要新闻摘要",
-            "risk_alerts": ["风险点1：具体描述", "风险点2：具体描述"],
-            "positive_catalysts": ["利好1：具体描述", "利好2：具体描述"],
-            "earnings_outlook": "业绩预期分析（基于年报预告、业绩快报等）",
-            "sentiment_summary": "舆情情绪一句话总结"
+            "latest_news": "最新消息摘要",
+            "risk_alerts": ["风险点1", "风险点2"],
+            "positive_catalysts": ["利好1", "利好2"],
+            "earnings_outlook": "业绩预期",
+            "sentiment_summary": "舆情总结"
         },
-
         "battle_plan": {
-            "sniper_points": {
-                "ideal_buy": "理想买入点：XX元（在MA5附近）",
-                "secondary_buy": "次优买入点：XX元（在MA10附近）",
-                "stop_loss": "止损位：XX元（跌破MA20或X%）",
-                "take_profit": "目标位：XX元（前高/整数关口）"
-            },
-            "position_strategy": {
-                "suggested_position": "建议仓位：X成",
-                "entry_plan": "分批建仓策略描述",
-                "risk_control": "风控策略描述"
-            },
-            "action_checklist": [
-                "✅/⚠️/❌ 检查项1：多头排列",
-                "✅/⚠️/❌ 检查项2：乖离率合理（强势趋势可放宽）",
-                "✅/⚠️/❌ 检查项3：量能配合",
-                "✅/⚠️/❌ 检查项4：无重大利空",
-                "✅/⚠️/❌ 检查项5：筹码健康",
-                "✅/⚠️/❌ 检查项6：PE估值合理"
-            ]
+            "sniper_points": {"ideal_buy": "理想买入价", "secondary_buy": "次优买入价", "stop_loss": "止损位", "take_profit": "目标位"},
+            "position_strategy": {"suggested_position": "建议仓位", "entry_plan": "建仓策略", "risk_control": "风控策略"},
+            "action_checklist": ["✅/⚠️/❌ 检查项1", "✅/⚠️/❌ 检查项2"]
         }
     },
 
-    "analysis_summary": "100字综合分析摘要",
-    "key_points": "3-5个核心看点，逗号分隔",
+    "analysis_summary": "100字综合摘要",
+    "key_points": "3-5个核心看点",
     "risk_warning": "风险提示",
-    "buy_reason": "操作理由，引用交易理念",
-
-    "trend_analysis": "走势形态分析",
-    "short_term_outlook": "短期1-3日展望",
-    "medium_term_outlook": "中期1-2周展望",
-    "technical_analysis": "技术面综合分析",
-    "ma_analysis": "均线系统分析",
+    "buy_reason": "操作理由",
+    "trend_analysis": "走势分析",
+    "short_term_outlook": "短期展望",
+    "medium_term_outlook": "中期展望",
+    "technical_analysis": "技术面分析",
+    "ma_analysis": "均线分析",
     "volume_analysis": "量能分析",
-    "pattern_analysis": "K线形态分析",
-    "fundamental_analysis": "基本面分析",
-    "sector_position": "板块行业分析",
-    "company_highlights": "公司亮点/风险",
+    "pattern_analysis": "K线形态",
+    "fundamental_analysis": "基本面",
+    "sector_position": "板块行业",
+    "company_highlights": "公司亮点",
     "news_summary": "新闻摘要",
     "market_sentiment": "市场情绪",
     "hot_topics": "相关热点",
-
     "search_performed": true/false,
-    "data_sources": "数据来源说明"
+    "data_sources": "数据来源"
 }
-```
+```'''
 
-## 评分标准
+    # JSON格式模板 - 筹码数据部分（仅A股包含）
+    _JSON_TEMPLATE_CHIP = '''
+    在data_perspective中额外包含：
+    "chip_structure": {"profit_ratio": 获利比例, "avg_cost": 平均成本, "concentration": 筹码集中度, "chip_health": "健康/一般/警惕"}'''
 
-### 强烈买入（80-100分）：
-- ✅ 多头排列：MA5 > MA10 > MA20
-- ✅ 低乖离率：<2%，最佳买点
-- ✅ 缩量回调或放量突破
-- ✅ 筹码集中健康
-- ✅ 消息面有利好催化
+    # 检查清单模板 - 包含筹码检查
+    _CHECKLIST_WITH_CHIP = '''["✅/⚠️/❌ 多头排列", "✅/⚠️/❌ 乖离率合理", "✅/⚠️/❌ 量能配合", "✅/⚠️/❌ 无重大利空", "✅/⚠️/❌ 筹码健康", "✅/⚠️/❌ PE估值合理"]'''
 
-### 买入（60-79分）：
-- ✅ 多头排列或弱势多头
-- ✅ 乖离率 <5%
-- ✅ 量能正常
-- ⚪ 允许一项次要条件不满足
-
-### 观望（40-59分）：
-- ⚠️ 乖离率 >5%（追高风险）
-- ⚠️ 均线缠绕趋势不明
-- ⚠️ 有风险事件
-
-### 卖出/减仓（0-39分）：
-- ❌ 空头排列
-- ❌ 跌破MA20
-- ❌ 放量下跌
-- ❌ 重大利空
-
-## 决策仪表盘核心原则
-
-1. **核心结论先行**：一句话说清该买该卖
-2. **分持仓建议**：空仓者和持仓者给不同建议
-3. **精确狙击点**：必须给出具体价格，不说模糊的话
-4. **检查清单可视化**：用 ✅⚠️❌ 明确显示每项检查结果
-5. **风险优先级**：舆情中的风险点要醒目标出"""
+    # 检查清单模板 - 不含筹码检查（美股等）
+    _CHECKLIST_WITHOUT_CHIP = '''["✅/⚠️/❌ 多头排列", "✅/⚠️/❌ 乖离率合理", "✅/⚠️/❌ 量能配合", "✅/⚠️/❌ 无重大利空", "✅/⚠️/❌ PE估值合理"]'''
 
     def __init__(self, api_key: Optional[str] = None):
         """Initialize LLM Analyzer via LiteLLM.
@@ -928,13 +853,17 @@ class GeminiAnalyzer:
 在回答技术面问题（如均线、乖离率）时，请直接说明“数据缺失，无法判断”，**严禁编造数据**。
 """
 
-        # 明确的输出要求
+        # 动态生成JSON格式说明（根据数据可用性）
+        has_chip = 'chip' in context
+        has_realtime = 'realtime' in context
+        has_trend = 'trend_analysis' in context
+
         prompt += f"""
 ---
 
 ## ✅ 分析任务
 
-请为 **{stock_name}({code})** 生成【决策仪表盘】，严格按照 JSON 格式输出。
+请为 **{stock_name}({code})** 生成【决策仪表盘】，严格按照以下 JSON 格式输出。
 """
         if context.get('is_index_etf'):
             prompt += """
@@ -945,24 +874,44 @@ class GeminiAnalyzer:
 > - `risk_alerts` 中不得出现基金管理人相关的公司经营风险
 
 """
+
+        # 核心JSON格式（始终包含）
+        prompt += self._JSON_TEMPLATE_CORE
+
+        # 根据数据可用性添加说明
+        if has_chip:
+            prompt += self._JSON_TEMPLATE_CHIP
+            checklist = self._CHECKLIST_WITH_CHIP
+        else:
+            prompt += """
+
+注意：该股票无筹码数据，chip_structure字段可省略。"""
+            checklist = self._CHECKLIST_WITHOUT_CHIP
+
         prompt += f"""
+
 ### ⚠️ 重要：输出正确的股票名称格式
-正确的股票名称格式为“股票名称（股票代码）”，例如“贵州茅台（600519）”。
+正确的股票名称格式为"股票名称（股票代码）"，例如"贵州茅台（600519）"。
 如果上方显示的股票名称为"股票{code}"或不正确，请在分析开头**明确输出该股票的正确中文全称**。
 
 ### 重点关注（必须明确回答）：
 1. ❓ 是否满足 MA5>MA10>MA20 多头排列？
 2. ❓ 当前乖离率是否在安全范围内（<5%）？—— 超过5%必须标注"严禁追高"
 3. ❓ 量能是否配合（缩量回调/放量突破）？
-4. ❓ 筹码结构是否健康？
-5. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）
+"""
+        if has_chip:
+            prompt += "4. ❓ 筹码结构是否健康？\n"
+            prompt += "5. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）\n"
+        else:
+            prompt += "4. ❓ 消息面有无重大利空？（减持、处罚、业绩变脸等）\n"
 
+        prompt += f"""
 ### 决策仪表盘要求：
 - **股票名称**：必须输出正确的中文全称（如"贵州茅台"而非"股票600519"）
 - **核心结论**：一句话说清该买/该卖/该等
 - **持仓分类建议**：空仓者怎么做 vs 持仓者怎么做
 - **具体狙击点位**：买入价、止损价、目标价（精确到分）
-- **检查清单**：每项用 ✅/⚠️/❌ 标记
+- **检查清单**：每项用 ✅/⚠️/❌ 标记，参考格式：{checklist}
 
 请输出完整的 JSON 格式决策仪表盘。"""
         

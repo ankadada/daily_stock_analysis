@@ -87,6 +87,7 @@ class StockAnalysisPipeline:
             brave_keys=self.config.brave_api_keys,
             serpapi_keys=self.config.serpapi_keys,
             news_max_age_days=self.config.news_max_age_days,
+            search_depth=self.config.search_depth,
         )
         
         logger.info(f"调度器初始化完成，最大并发数: {self.max_workers}")
@@ -101,7 +102,10 @@ class StockAnalysisPipeline:
         else:
             logger.info("筹码分布分析已禁用")
         if self.search_service.is_available:
-            logger.info("搜索服务已启用 (Tavily/SerpAPI)")
+            if self.config.skip_news_search:
+                logger.info("搜索服务已配置但已跳过新闻搜索 (SKIP_NEWS_SEARCH=true)")
+            else:
+                logger.info(f"搜索服务已启用 (Tavily/SerpAPI, 深度: {self.search_service.search_depth})")
         else:
             logger.warning("搜索服务未启用（未配置 API Key）")
     
@@ -250,7 +254,9 @@ class StockAnalysisPipeline:
 
             # Step 4: 多维度情报搜索（最新消息+风险排查+业绩预期）
             news_context = None
-            if self.search_service.is_available:
+            if self.config.skip_news_search:
+                logger.info(f"{stock_name}({code}) 已配置跳过新闻搜索，仅使用技术面数据")
+            elif self.search_service.is_available:
                 logger.info(f"{stock_name}({code}) 开始多维度情报搜索...")
 
                 # 使用多维度搜索（最多5次搜索）

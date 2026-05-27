@@ -102,6 +102,8 @@ class Config:
     # === 新闻与分析筛选配置 ===
     news_max_age_days: int = 3   # 新闻最大时效（天）
     bias_threshold: float = 5.0  # 乖离率阈值（%），超过此值提示不追高
+    search_depth: str = "basic"  # 搜索深度：basic(1 credit/次) / advanced(2-5 credits/次)
+    skip_news_search: bool = False  # 跳过新闻搜索：true 时跳过所有新闻搜索，只用技术面数据
 
     # === Agent 模式配置 ===
     agent_mode: bool = False
@@ -488,6 +490,8 @@ class Config:
             serpapi_keys=serpapi_keys,
             news_max_age_days=max(1, int(os.getenv('NEWS_MAX_AGE_DAYS', '3'))),
             bias_threshold=max(1.0, float(os.getenv('BIAS_THRESHOLD', '5.0'))),
+            search_depth=cls._parse_search_depth(os.getenv('SEARCH_DEPTH', 'basic')),
+            skip_news_search=os.getenv('SKIP_NEWS_SEARCH', 'false').lower() == 'true',
             agent_mode=os.getenv('AGENT_MODE', 'false').lower() == 'true',
             agent_max_steps=int(os.getenv('AGENT_MAX_STEPS', '10')),
             agent_skills=[s.strip() for s in os.getenv('AGENT_SKILLS', '').split(',') if s.strip()],
@@ -634,6 +638,18 @@ class Config:
             f"MARKET_REVIEW_REGION 配置值 '{value}' 无效，已回退为默认值 'cn'（合法值：cn / us / both）"
         )
         return 'cn'
+
+    @classmethod
+    def _parse_search_depth(cls, value: str) -> str:
+        """解析搜索深度配置，非法值记录警告后回退为 basic"""
+        import logging
+        v = (value or 'basic').strip().lower()
+        if v in ('basic', 'advanced'):
+            return v
+        logging.getLogger(__name__).warning(
+            f"SEARCH_DEPTH 配置值 '{value}' 无效，已回退为默认值 'basic'（合法值：basic / advanced）"
+        )
+        return 'basic'
 
     @classmethod
     def _resolve_realtime_source_priority(cls) -> str:
