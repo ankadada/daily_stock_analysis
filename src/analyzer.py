@@ -20,7 +20,12 @@ import litellm
 from json_repair import repair_json
 from litellm import Router
 
-from src.agent.llm_adapter import get_thinking_extra_body
+from src.agent.llm_adapter import (
+    get_litellm_call_model,
+    get_reasoning_effort_kwargs,
+    get_temperature_kwargs,
+    get_thinking_extra_body,
+)
 from src.config import Config, get_config
 
 logger = logging.getLogger(__name__)
@@ -502,12 +507,12 @@ class GeminiAnalyzer:
             extra_params = self._extra_litellm_params(litellm_model, config)
             model_list = [
                 {
-                    "model_name": litellm_model,
-                    "litellm_params": {
-                        "model": litellm_model,
-                        "api_key": k,
-                        **extra_params,
-                    },
+                        "model_name": litellm_model,
+                        "litellm_params": {
+                            "model": get_litellm_call_model(litellm_model, config),
+                            "api_key": k,
+                            **extra_params,
+                        },
                 }
                 for k in keys
             ]
@@ -555,19 +560,21 @@ class GeminiAnalyzer:
             try:
                 model_short = model.split("/")[-1] if "/" in model else model
                 call_kwargs: Dict[str, Any] = {
-                    "model": model,
+                    "model": get_litellm_call_model(model, config),
                     "messages": [
                         {"role": "system", "content": self.SYSTEM_PROMPT},
                         {"role": "user", "content": prompt},
                     ],
-                    "temperature": temperature,
                     "max_tokens": max_tokens,
+                    **get_temperature_kwargs(model, temperature),
+                    **get_reasoning_effort_kwargs(config),
                 }
                 extra = get_thinking_extra_body(model_short)
                 if extra:
                     call_kwargs["extra_body"] = extra
 
                 if self._router and model == config.litellm_model:
+                    call_kwargs["model"] = model
                     response = self._router.completion(**call_kwargs)
                 else:
                     call_kwargs["api_key"] = keys[0]

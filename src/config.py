@@ -63,6 +63,7 @@ class Config:
     # LiteLLM unified model config (provider/model format, e.g. gemini/gemini-2.5-flash)
     litellm_model: str = ""  # Primary model; must include provider prefix when set explicitly
     litellm_fallback_models: List[str] = field(default_factory=list)  # Cross-model fallback list
+    litellm_reasoning_effort: str = ""  # Optional reasoning effort passed through to LiteLLM
 
     # Multi-key support: each list is parsed from *_API_KEYS (comma-separated) with single-key fallback
     gemini_api_keys: List[str] = field(default_factory=list)
@@ -426,6 +427,12 @@ class Config:
             else:
                 litellm_fallback_models = []
 
+        litellm_reasoning_effort = (
+            os.getenv('LITELLM_REASONING_EFFORT')
+            or os.getenv('OPENAI_REASONING_EFFORT')
+            or ''
+        ).strip()
+
         # 解析搜索引擎 API Keys（支持多个 key，逗号分隔）
         bocha_keys_str = os.getenv('BOCHA_API_KEYS', '')
         bocha_api_keys = [k.strip() for k in bocha_keys_str.split(',') if k.strip()]
@@ -457,6 +464,7 @@ class Config:
             tushare_token=os.getenv('TUSHARE_TOKEN'),
             litellm_model=litellm_model,
             litellm_fallback_models=litellm_fallback_models,
+            litellm_reasoning_effort=litellm_reasoning_effort,
             gemini_api_keys=gemini_api_keys,
             anthropic_api_keys=anthropic_api_keys,
             openai_api_keys=openai_api_keys,

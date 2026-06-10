@@ -91,6 +91,34 @@ def get_thinking_extra_body(model: str) -> Optional[dict]:
     return _get_opt_in_payload(model, _OPT_IN_THINKING_MODELS)
 
 
+def get_reasoning_effort_kwargs(config: Any) -> Dict[str, str]:
+    """Return LiteLLM reasoning effort kwargs when configured."""
+    effort = (getattr(config, "litellm_reasoning_effort", "") or "").strip()
+    if not effort:
+        return {}
+    return {"reasoning_effort": effort}
+
+
+def get_litellm_call_model(model: str, config: Any) -> str:
+    """Return the model string LiteLLM needs for provider routing."""
+    if (getattr(config, "openai_base_url", None) or "") and model.startswith("codex/"):
+        return f"openai/{model}"
+    return model
+
+
+def get_temperature_kwargs(model: str, temperature: float) -> Dict[str, float]:
+    """Return temperature kwargs compatible with the target model family."""
+    model_lower = (model or "").lower()
+    if (
+        model_lower.startswith("gpt-5")
+        or model_lower.startswith("openai/gpt-5")
+        or model_lower.startswith("codex/gpt-5")
+        or model_lower.startswith("openai/codex/gpt-5")
+    ):
+        return {"temperature": 1}
+    return {"temperature": temperature}
+
+
 # ============================================================
 # LLM Tool Adapter
 # ============================================================
@@ -152,7 +180,7 @@ class LLMToolAdapter:
                 {
                     "model_name": litellm_model,
                     "litellm_params": {
-                        "model": litellm_model,
+                        "model": get_litellm_call_model(litellm_model, config),
                         "api_key": k,
                         **extra_params,
                     },
@@ -233,9 +261,10 @@ class LLMToolAdapter:
         model_short = model.split("/")[-1] if "/" in model else model
 
         call_kwargs: Dict[str, Any] = {
-            "model": model,
+            "model": get_litellm_call_model(model, config),
             "messages": openai_messages,
-            "temperature": self._get_temperature(model),
+            **get_temperature_kwargs(model, self._get_temperature(model)),
+            **get_reasoning_effort_kwargs(config),
         }
 
         extra = get_thinking_extra_body(model_short)
@@ -247,6 +276,7 @@ class LLMToolAdapter:
 
         # Use Router for primary model (multi-key), direct litellm for others
         if self._router and model == self._config.litellm_model:
+            call_kwargs["model"] = model
             response = self._router.completion(**call_kwargs)
         else:
             keys = self._get_api_keys_for_model(model)

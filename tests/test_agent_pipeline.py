@@ -82,6 +82,21 @@ class TestAgentConfig(unittest.TestCase):
         config = Config._load_from_env()
         self.assertEqual(config.agent_skills, ['dragon_head', 'shrink_pullback'])
 
+    @patch.dict(os.environ, {
+        'OPENAI_API_KEY': 'sk-test-openai-key',
+        'OPENAI_BASE_URL': 'https://llm-proxy.tapsvc.com/v1',
+        'LITELLM_MODEL': 'codex/gpt-5.4',
+        'LITELLM_REASONING_EFFORT': 'high',
+    }, clear=True)
+    def test_litellm_reasoning_config_from_env(self):
+        """LiteLLM model and reasoning effort should be loaded from environment."""
+        from src.config import Config
+        Config._instance = None
+        config = Config._load_from_env()
+        self.assertEqual(config.litellm_model, 'codex/gpt-5.4')
+        self.assertEqual(config.litellm_reasoning_effort, 'high')
+        self.assertEqual(config.openai_base_url, 'https://llm-proxy.tapsvc.com/v1')
+
 
 # ============================================================
 # AgentResult to AnalysisResult conversion
@@ -462,6 +477,25 @@ class TestAnalyzeWithAgentStockName(unittest.TestCase):
 
 class TestAgentConstructionChain(unittest.TestCase):
     """Test that the agent construction chain wires up correctly."""
+
+    def test_litellm_codex_proxy_model_routing(self):
+        """codex models behind an OpenAI-compatible base URL should route via OpenAI."""
+        from src.agent.llm_adapter import get_litellm_call_model
+
+        mock_cfg = MagicMock()
+        mock_cfg.openai_base_url = "https://llm-proxy.tapsvc.com/v1"
+        self.assertEqual(
+            get_litellm_call_model("codex/gpt-5.4", mock_cfg),
+            "openai/codex/gpt-5.4",
+        )
+
+    def test_gpt5_temperature_compatibility(self):
+        """GPT-5-family models should use the supported temperature value."""
+        from src.agent.llm_adapter import get_temperature_kwargs
+
+        self.assertEqual(get_temperature_kwargs("codex/gpt-5.4", 0.7), {"temperature": 1})
+        self.assertEqual(get_temperature_kwargs("openai/codex/gpt-5.4", 0.7), {"temperature": 1})
+        self.assertEqual(get_temperature_kwargs("gemini/gemini-3-flash-preview", 0.7), {"temperature": 0.7})
 
     def test_llm_adapter_accepts_config(self):
         """LLMToolAdapter should accept an optional config parameter."""

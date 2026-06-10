@@ -83,6 +83,8 @@
 | Secret 名称 | 说明 | 必填 |
 |------------|------|:----:|
 | `AIHUBMIX_KEY` | [AIHubMix](https://aihubmix.com/?aff=CfMq) API Key，一 Key 切换使用全系模型，免费模型可用 | 可选 |
+| `LITELLM_MODEL` | 主模型配置（如 `codex/gpt-5.4`、`openai/gpt-4o`、`gemini/gemini-3-flash-preview`），配置后优先于自动推断 | 可选 |
+| `LITELLM_REASONING_EFFORT` | 推理强度（如 `low`、`medium`、`high`、`xhigh`），支持的模型会透传给 LiteLLM | 可选 |
 | `GEMINI_API_KEY` | [Google AI Studio](https://aistudio.google.com/) 获取免费 Key（需科学上网） | 可选 |
 | `ANTHROPIC_API_KEY` | [Anthropic Claude](https://console.anthropic.com/) API Key | 可选 |
 | `ANTHROPIC_MODEL` | Claude 模型（如 `claude-3-5-sonnet-20241022`） | 可选 |
