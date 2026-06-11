@@ -64,6 +64,7 @@ jobs:
           # ==========================================
           # LiteLLM unified model config
           LITELLM_MODEL: ${{ vars.LITELLM_MODEL || secrets.LITELLM_MODEL || 'codex/gpt-5.4' }}
+          LITELLM_FALLBACK_MODELS: ${{ vars.LITELLM_FALLBACK_MODELS || secrets.LITELLM_FALLBACK_MODELS }}
           LITELLM_REASONING_EFFORT: ${{ vars.LITELLM_REASONING_EFFORT || secrets.LITELLM_REASONING_EFFORT || 'high' }}
 
           # Gemini AI（主选）
@@ -190,6 +191,7 @@ jobs:
           echo "=========================================="
           echo "【AI 配置】"
           echo "  LiteLLM Model:  ${LITELLM_MODEL:-自动推断}"
+          echo "  Fallbacks:      ${LITELLM_FALLBACK_MODELS:-未配置}"
           echo "  Reasoning:      ${LITELLM_REASONING_EFFORT:-默认}"
           echo "  Gemini API Key: $([ -n "$GEMINI_API_KEY" ] && echo '✅ 已配置' || echo '❌ 未配置')"
           echo "  AIHubMix Key:   $([ -n "$AIHUBMIX_KEY" ] && echo '✅ 已配置' || echo '⚪ 未配置')"

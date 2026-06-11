@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [Unreleased]
 
 ### Fixed
+- 🐛 **Scheduled notification quality guard** — skip stock and market notifications when all LLM calls fail, and expose `LITELLM_FALLBACK_MODELS` in the daily analysis workflow.
 - 🐛 **AstrBot sender docstring misplaced** — `import time` placed before docstring in `_send_astrbot`, causing it to become dead code
 - 🐛 **Telegram Markdown link escaping** — `_convert_to_telegram_markdown` escaped `[]()` characters, breaking all Markdown links in reports
 - 🐛 **Duplicate `discord_bot_status` field** in Config dataclass — second declaration silently shadowed the first

@@ -392,6 +392,61 @@ class TestPipelineRouting(unittest.TestCase):
             # Instead, verify analyzer.analyze was called (legacy path)
             pipeline.analyzer.analyze.assert_called_once()
 
+    def test_legacy_failed_analysis_is_not_returned(self):
+        """Failed LLM results should not be included in reports or notifications."""
+        with patch('src.core.pipeline.get_config') as mock_config, \
+             patch('src.core.pipeline.get_db'), \
+             patch('src.core.pipeline.DataFetcherManager'), \
+             patch('src.core.pipeline.GeminiAnalyzer'), \
+             patch('src.core.pipeline.NotificationService'), \
+             patch('src.core.pipeline.SearchService'):
+
+            mock_cfg = MagicMock()
+            mock_cfg.max_workers = 2
+            mock_cfg.agent_mode = False
+            mock_cfg.agent_max_steps = 10
+            mock_cfg.agent_skills = []
+            mock_cfg.bocha_api_keys = []
+            mock_cfg.tavily_api_keys = []
+            mock_cfg.brave_api_keys = []
+            mock_cfg.serpapi_keys = []
+            mock_cfg.news_max_age_days = 7
+            mock_cfg.enable_realtime_quote = True
+            mock_cfg.enable_chip_distribution = True
+            mock_cfg.realtime_source_priority = []
+            mock_cfg.save_context_snapshot = False
+            mock_config.return_value = mock_cfg
+
+            from src.analyzer import AnalysisResult
+            from src.core.pipeline import StockAnalysisPipeline
+            from src.enums import ReportType
+
+            pipeline = StockAnalysisPipeline(config=mock_cfg)
+            pipeline.fetcher_manager.get_stock_name.return_value = "Apple Inc."
+            pipeline.fetcher_manager.get_realtime_quote.return_value = None
+            pipeline.fetcher_manager.get_chip_distribution.return_value = None
+            pipeline.search_service.is_available = False
+            pipeline.db.get_analysis_context.return_value = {
+                "code": "AAPL",
+                "stock_name": "Apple Inc.",
+                "today": {},
+                "yesterday": {},
+            }
+            pipeline.analyzer.analyze.return_value = AnalysisResult(
+                code="AAPL",
+                name="Apple Inc.",
+                sentiment_score=50,
+                trend_prediction="震荡",
+                operation_advice="持有",
+                success=False,
+                error_message="All LLM models failed",
+            )
+
+            result = pipeline.analyze_stock("AAPL", ReportType.SIMPLE, "q-fail")
+
+            self.assertIsNone(result)
+            pipeline.db.save_analysis_history.assert_not_called()
+
 
 class TestAnalyzeWithAgentStockName(unittest.TestCase):
     """Test stock-name handling in _analyze_with_agent."""

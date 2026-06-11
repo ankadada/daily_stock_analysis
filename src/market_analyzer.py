@@ -309,13 +309,13 @@ class MarketAnalyzer:
                 logger.info(f"[大盘] 复盘报告生成成功，长度: {len(review)} 字符")
                 # Inject structured data tables into LLM prose sections
                 return self._inject_data_into_review(review, overview)
-            else:
-                logger.warning("[大盘] 大模型返回为空")
-                return self._generate_template_review(overview, news)
+
+            logger.error("[大盘] 大模型返回为空，跳过大盘复盘推送")
+            return ""
                 
         except Exception as e:
             logger.error(f"[大盘] 大模型生成复盘报告失败: {e}")
-            return self._generate_template_review(overview, news)
+            return ""
     
     def _inject_data_into_review(self, review: str, overview: MarketOverview) -> str:
         """Inject structured data tables into the corresponding LLM prose sections."""

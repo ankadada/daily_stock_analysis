@@ -325,6 +325,13 @@ class StockAnalysisPipeline:
                 result.current_price = realtime_data.get('price')
                 result.change_pct = realtime_data.get('change_pct')
 
+            if result and not getattr(result, "success", True):
+                logger.error(
+                    f"{stock_name}({code}) AI analysis failed; skip notification/report inclusion: "
+                    f"{getattr(result, 'error_message', '')}"
+                )
+                return None
+
             # Step 8: 保存分析历史记录
             if result:
                 try:
